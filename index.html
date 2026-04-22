@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>量子核心 - 无人机集群防御</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <!-- 顶部UI栏 -->
+        <div id="top-bar">
+            <div class="resource-display">
+                <span class="resource-label">能量: </span>
+                <span id="energy" class="resource-value">100</span>
+            </div>
+            <div class="resource-display">
+                <span class="resource-label">晶石: </span>
+                <span id="crystals" class="resource-value">0</span>
+            </div>
+            <div class="wave-display">
+                <span class="wave-label">波次: </span>
+                <span id="wave" class="wave-value">1</span>
+            </div>
+            <div id="game-status" class="status-indicator">准备中</div>
+        </div>
+
+        <!-- 主游戏区域 -->
+        <div id="main-area">
+            <!-- 左侧无人机控制面板 -->
+            <div id="drone-panel">
+                <h3>无人机集群</h3>
+                <div class="drone-types">
+                    <div class="drone-type" data-type="scout">
+                        <div class="drone-icon scout-icon"></div>
+                        <span>侦察型</span>
+                        <span class="drone-cost">20能量</span>
+                    </div>
+                    <div class="drone-type" data-type="combat">
+                        <div class="drone-icon combat-icon"></div>
+                        <span>战斗型</span>
+                        <span class="drone-cost">50能量</span>
+                    </div>
+                    <div class="drone-type" data-type="support">
+                        <div class="drone-icon support-icon"></div>
+                        <span>支援型</span>
+                        <span class="drone-cost">30能量</span>
+                    </div>
+                </div>
+                <div class="drone-formations">
+                    <h4>编队形态</h4>
+                    <button class="formation-btn" data-formation="spread">分散</button>
+                    <button class="formation-btn" data-formation="line">线形</button>
+                    <button class="formation-btn" data-formation="circle">圆形</button>
+                    <button class="formation-btn" data-formation="phalanx">方阵</button>
+                </div>
+                <div class="program-console">
+                    <h4>编程控制台</h4>
+                    <textarea id="program-input" placeholder="输入无人机指令..."></textarea>
+                    <button id="execute-program">执行</button>
+                    <button id="clear-program">清空</button>
+                </div>
+            </div>
+
+            <!-- 游戏画布 -->
+            <div id="game-canvas-container">
+                <canvas id="game-canvas" width="800" height="600"></canvas>
+                <div id="particle-canvas-container">
+                    <canvas id="particle-canvas" width="800" height="600"></canvas>
+                </div>
+            </div>
+
+            <!-- 右侧技能面板 -->
+            <div id="skill-panel">
+                <h3>指挥官技能</h3>
+                <div class="skill-list">
+                    <div class="skill" data-skill="orbital-laser" id="skill-orbital">
+                        <div class="skill-icon laser-icon"></div>
+                        <span>轨道激光</span>
+                        <span class="skill-cost">100晶石</span>
+                        <div class="skill-cooldown">就绪</div>
+                    </div>
+                    <div class="skill" data-skill="emp" id="skill-emp">
+                        <div class="skill-icon emp-icon"></div>
+                        <span>电磁脉冲</span>
+                        <span class="skill-cost">150能量</span>
+                        <div class="skill-cooldown">就绪</div>
+                    </div>
+                    <div class="skill" data-skill="shield" id="skill-shield">
+                        <div class="skill-icon shield-icon"></div>
+                        <span>量子护盾</span>
+                        <span class="skill-cost">80能量</span>
+                        <div class="skill-cooldown">就绪</div>
+                    </div>
+                    <div class="skill" data-skill="reinforcement" id="skill-reinforcement">
+                        <div class="skill-icon reinforcement-icon"></div>
+                        <span>紧急增援</span>
+                        <span class="skill-cost">200晶石</span>
+                        <div class="skill-cooldown">就绪</div>
+                    </div>
+                </div>
+                <div class="game-controls">
+                    <button id="start-wave">开始波次</button>
+                    <button id="pause-game">暂停</button>
+                    <button id="speed-up">加速</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 底部状态栏 -->
+        <div id="bottom-bar">
+            <div id="selected-unit-info">选择一个单位查看详情</div>
+            <div id="game-log">系统初始化完成</div>
+        </div>
+    </div>
+
+    <!-- 开始菜单 -->
+    <div id="start-menu" class="overlay">
+        <div class="menu-content">
+            <h1>量子核心</h1>
+            <h2>无人机集群防御</h2>
+            <p>部署无人机集群，抵御外星入侵者，保护能量晶石矿脉</p>
+            <button id="start-game">开始游戏</button>
+            <button id="show-tutorial">游戏教程</button>
+        </div>
+    </div>
+
+    <!-- 教程面板 -->
+    <div id="tutorial-panel" class="overlay hidden">
+        <div class="tutorial-content">
+            <h2>游戏教程</h2>
+            <div class="tutorial-steps">
+                <div class="tutorial-step">
+                    <h3>1. 部署无人机</h3>
+                    <p>点击左侧面板选择无人机类型，然后在战场上点击放置。侦察型速度快，战斗型伤害高，支援型可以治疗友军。</p>
+                </div>
+                <div class="tutorial-step">
+                    <h3>2. 经济循环</h3>
+                    <p>击退敌人获得能量，破坏地图上的能量晶石获得晶石资源。使用资源制造更多无人机。</p>
+                </div>
+                <div class="tutorial-step">
+                    <h3>3. 编队控制</h3>
+                    <p>选择无人机编队形态，使用编程控制台输入高级指令控制集群行为。</p>
+                </div>
+                <div class="tutorial-step">
+                    <h3>4. 指挥官技能</h3>
+                    <p>使用右侧技能面板释放全局技能：轨道激光造成大量伤害，电磁脉冲瘫痪敌人，量子护盾保护友军，紧急增援召唤无人机。</p>
+                </div>
+            </div>
+            <button id="close-tutorial">我知道了</button>
+        </div>
+    </div>
+
+    <!-- 游戏结束面板 -->
+    <div id="game-over-panel" class="overlay hidden">
+        <div class="game-over-content">
+            <h2 id="game-over-title">游戏结束</h2>
+            <p id="game-over-message">基地被摧毁了</p>
+            <div class="game-stats">
+                <div>波次存活: <span id="final-wave">0</span></div>
+                <div>消灭敌人: <span id="final-kills">0</span></div>
+                <div>获取晶石: <span id="final-crystals">0</span></div>
+            </div>
+            <button id="restart-game">重新开始</button>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
