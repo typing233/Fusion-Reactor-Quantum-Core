@@ -28,9 +28,9 @@ class Game {
         this.selectedFormation = 'spread';
         this.selectedSkill = null;
         
-        this.isDragging = false;
-        this.dragPreviewX = 0;
-        this.dragPreviewY = 0;
+        this.mouseX = 0;
+        this.mouseY = 0;
+        this.mouseOnCanvas = false;
         
         this.skillCooldowns = {
             'orbital-laser': 0,
@@ -131,15 +131,14 @@ class Game {
         });
         
         document.querySelectorAll('.drone-type').forEach(btn => {
-            btn.addEventListener('mousedown', (e) => {
+            btn.addEventListener('click', (e) => {
                 e.preventDefault();
                 this.selectedDroneType = btn.dataset.type;
                 this.selectedSkill = null;
                 document.querySelectorAll('.drone-type').forEach(b => b.classList.remove('selected'));
                 document.querySelectorAll('.skill').forEach(s => s.classList.remove('selected'));
                 btn.classList.add('selected');
-                this.isDragging = true;
-                this.log(`已选择: ${this.getDroneTypeName(btn.dataset.type)}无人机，拖拽到战场放置`);
+                this.log(`已选择: ${this.getDroneTypeName(btn.dataset.type)}无人机，点击战场放置`);
             });
         });
         
@@ -164,7 +163,6 @@ class Game {
                 
                 this.selectedSkill = btn.dataset.skill;
                 this.selectedDroneType = null;
-                this.isDragging = false;
                 document.querySelectorAll('.skill').forEach(s => s.classList.remove('selected'));
                 document.querySelectorAll('.drone-type').forEach(b => b.classList.remove('selected'));
                 btn.classList.add('selected');
@@ -214,30 +212,20 @@ class Game {
             this.log('编程控制台已清空');
         });
         
-        this.canvas.addEventListener('mousedown', (e) => this.handleCanvasMouseDown(e));
         this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
-        this.canvas.addEventListener('mouseup', (e) => this.handleCanvasMouseUp(e));
+        this.canvas.addEventListener('mouseenter', (e) => this.handleCanvasMouseEnter(e));
         this.canvas.addEventListener('mouseleave', (e) => this.handleCanvasMouseLeave(e));
+        this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
         
         window.addEventListener('resize', () => {
             this.setupCanvas();
         });
     }
     
-    handleCanvasMouseDown(e) {
-        if (this.gameState !== 'playing') return;
-        
-        const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        
-        if (this.selectedSkill) {
-            this.useSkill(this.selectedSkill, x, y);
-            return;
-        }
-        
-        if (this.selectedDroneType) {
-            this.tryPlaceDrone(x, y);
+    handleCanvasMouseEnter(e) {
+        this.mouseOnCanvas = true;
+        if (this.selectedDroneType || this.selectedSkill) {
+            this.canvas.style.cursor = 'crosshair';
         }
     }
     
@@ -245,23 +233,13 @@ class Game {
         if (this.gameState !== 'playing') return;
         
         const rect = this.canvas.getBoundingClientRect();
-        this.dragPreviewX = e.clientX - rect.left;
-        this.dragPreviewY = e.clientY - rect.top;
-        
-        if (this.isDragging && this.selectedDroneType) {
-            this.canvas.style.cursor = 'crosshair';
-        }
-    }
-    
-    handleCanvasMouseUp(e) {
-        if (this.gameState !== 'playing') return;
-        
-        this.isDragging = false;
-        this.canvas.style.cursor = 'default';
+        this.mouseX = e.clientX - rect.left;
+        this.mouseY = e.clientY - rect.top;
+        this.mouseOnCanvas = true;
     }
     
     handleCanvasMouseLeave(e) {
-        this.isDragging = false;
+        this.mouseOnCanvas = false;
         this.canvas.style.cursor = 'default';
     }
     
@@ -1379,9 +1357,9 @@ class Game {
     }
     
     drawDragPreview() {
-        if (this.isDragging && this.selectedDroneType) {
-            const col = Math.floor(this.dragPreviewX / this.gridSize);
-            const row = Math.floor(this.dragPreviewY / this.gridSize);
+        if (this.mouseOnCanvas && this.selectedDroneType) {
+            const col = Math.floor(this.mouseX / this.gridSize);
+            const row = Math.floor(this.mouseY / this.gridSize);
             
             const x = col * this.gridSize + this.gridSize / 2;
             const y = row * this.gridSize + this.gridSize / 2;
