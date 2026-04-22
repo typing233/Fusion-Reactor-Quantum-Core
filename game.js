@@ -883,6 +883,36 @@ class Game {
             }
             return true;
         });
+        
+        this.checkGameOver();
+    }
+    
+    checkGameOver() {
+        if (this.gameState !== 'playing') return;
+        
+        if (this.drones.length === 0 && this.energy < 20) {
+            this.log('所有无人机被摧毁，能量不足无法制造新无人机...');
+            this.gameOver(false);
+            return;
+        }
+        
+        if (this.drones.length === 0 && this.enemies.length > 0) {
+            setTimeout(() => {
+                if (this.drones.length === 0 && this.gameState === 'playing') {
+                    if (this.energy < 20) {
+                        this.log('所有无人机被摧毁，游戏结束！');
+                        this.gameOver(false);
+                    } else {
+                        this.log('所有无人机被摧毁！请部署新的无人机继续战斗。');
+                    }
+                }
+            }, 1000);
+        }
+        
+        if (this.currentWave >= 20 && this.enemies.length === 0 && !this.waveInProgress) {
+            this.log('恭喜！你成功防守了所有波次！');
+            this.gameOver(true);
+        }
     }
     
     checkWaveStatus() {
