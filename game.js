@@ -6,33 +6,32 @@ class Game {
         this.particleCanvas = document.getElementById('particle-canvas');
         this.particleCtx = this.particleCanvas.getContext('2d');
         
-        this.gameState = 'menu'; // menu, playing, paused, gameover
+        this.gameState = 'menu';
         this.currentWave = 1;
         this.waveInProgress = false;
         
-        // 网格系统
         this.gridSize = 50;
         this.gridCols = 16;
         this.gridRows = 12;
         
-        // 资源系统
         this.energy = 100;
         this.crystals = 0;
         this.totalCrystalsCollected = 0;
         
-        // 单位系统
         this.drones = [];
         this.enemies = [];
         this.crystalNodes = [];
         this.projectiles = [];
         this.particles = [];
         
-        // 选中状态
         this.selectedDroneType = null;
         this.selectedFormation = 'spread';
         this.selectedSkill = null;
         
-        // 技能冷却
+        this.isDragging = false;
+        this.dragPreviewX = 0;
+        this.dragPreviewY = 0;
+        
         this.skillCooldowns = {
             'orbital-laser': 0,
             'emp': 0,
@@ -40,10 +39,9 @@ class Game {
             'reinforcement': 0
         };
         
-        // 游戏统计
         this.totalKills = 0;
+        this.gameSpeed = 1;
         
-        // 初始化
         this.setupCanvas();
         this.setupEventListeners();
         this.initGame();
@@ -55,6 +53,9 @@ class Game {
         this.canvas.height = container.clientHeight;
         this.particleCanvas.width = container.clientWidth;
         this.particleCanvas.height = container.clientHeight;
+        
+        this.gridCols = Math.floor(this.canvas.width / this.gridSize);
+        this.gridRows = Math.floor(this.canvas.height / this.gridSize);
     }
     
     initGame() {
@@ -130,13 +131,15 @@ class Game {
         });
         
         document.querySelectorAll('.drone-type').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
                 this.selectedDroneType = btn.dataset.type;
                 this.selectedSkill = null;
                 document.querySelectorAll('.drone-type').forEach(b => b.classList.remove('selected'));
                 document.querySelectorAll('.skill').forEach(s => s.classList.remove('selected'));
                 btn.classList.add('selected');
-                this.log(`已选择: ${this.getDroneTypeName(btn.dataset.type)}无人机`);
+                this.isDragging = true;
+                this.log(`已选择: ${this.getDroneTypeName(btn.dataset.type)}无人机，拖拽到战场放置`);
             });
         });
         
@@ -154,14 +157,18 @@ class Game {
         
         document.querySelectorAll('.skill').forEach(btn => {
             btn.addEventListener('click', () => {
-                if (btn.classList.contains('on-cooldown')) return;
+                if (btn.classList.contains('on-cooldown')) {
+                    this.log('技能冷却中...');
+                    return;
+                }
                 
                 this.selectedSkill = btn.dataset.skill;
                 this.selectedDroneType = null;
+                this.isDragging = false;
                 document.querySelectorAll('.skill').forEach(s => s.classList.remove('selected'));
                 document.querySelectorAll('.drone-type').forEach(b => b.classList.remove('selected'));
                 btn.classList.add('selected');
-                this.log(`已选择技能: ${this.getSkillName(btn.dataset.skill)}`);
+                this.log(`已选择技能: ${this.getSkillName(btn.dataset.skill)}，点击战场释放`);
             });
         });
         
@@ -207,11 +214,152 @@ class Game {
             this.log('编程控制台已清空');
         });
         
-        this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
+        this.canvas.addEventListener('mousedown', (e) => this.handleCanvasMouseDown(e));
+        this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
+        this.canvas.addEventListener('mouseup', (e) => this.handleCanvasMouseUp(e));
+        this.canvas.addEventListener('mouseleave', (e) => this.handleCanvasMouseLeave(e));
         
         window.addEventListener('resize', () => {
             this.setupCanvas();
         });
+    }
+    
+    handleCanvasMouseDown(e) {
+        if (this.gameState !== 'playing') return;
+        
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        if (this.selectedSkill) {
+            this.useSkill(this.selectedSkill, x, y);
+            return;
+        }
+        
+        if (this.selectedDroneType) {
+            this.tryPlaceDrone(x, y);
+        }
+    }
+    
+    handleCanvasMouseMove(e) {
+        if (this.gameState !== 'playing') return;
+        
+        const rect = this.canvas.getBoundingClientRect();
+        this.dragPreviewX = e.clientX - rect.left;
+        this.dragPreviewY = e.clientY - rect.top;
+        
+        if (this.isDragging && this.selectedDroneType) {
+            this.canvas.style.cursor = 'crosshair';
+        }
+    }
+    
+    handleCanvasMouseUp(e) {
+        if (this.gameState !== 'playing') return;
+        
+        this.isDragging = false;
+        this.canvas.style.cursor = 'default';
+    }
+    
+    handleCanvasMouseLeave(e) {
+        this.isDragging = false;
+        this.canvas.style.cursor = 'default';
+    }
+    
+    handleCanvasClick(e) {
+        if (this.gameState !== 'playing') return;
+        
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        if (this.selectedSkill) {
+            this.useSkill(this.selectedSkill, x, y);
+            return;
+        }
+        
+        if (this.selectedDroneType) {
+            this.tryPlaceDrone(x, y);
+        }
+    }
+    
+    tryPlaceDrone(x, y) {
+        const col = Math.floor(x / this.gridSize);
+        const row = Math.floor(y / this.gridSize);
+        
+        if (col < 0 || col >= this.gridCols || row < 0 || row >= this.gridRows) {
+            this.log('无法在此位置放置无人机');
+            return false;
+        }
+        
+        const cost = this.getDroneCost(this.selectedDroneType);
+        if (this.energy < cost) {
+            this.log('能量不足！需要 ' + cost + ' 能量');
+            return false;
+        }
+        
+        const overlap = this.drones.some(drone => {
+            const droneCol = Math.floor(drone.x / this.gridSize);
+            const droneRow = Math.floor(drone.y / this.gridSize);
+            return Math.abs(droneCol - col) < 1 && Math.abs(droneRow - row) < 1;
+        });
+        
+        if (overlap) {
+            this.log('此位置已有无人机');
+            return false;
+        }
+        
+        this.energy -= cost;
+        const drone = this.createDrone(this.selectedDroneType, col, row);
+        this.drones.push(drone);
+        
+        this.createPlacementEffect(x, y);
+        this.updateUI();
+        this.log(`部署了一架${this.getDroneTypeName(this.selectedDroneType)}无人机`);
+        return true;
+    }
+    
+    placeDrone(x, y) {
+        return this.tryPlaceDrone(x, y);
+    }
+    
+    createDrone(type, col, row) {
+        const stats = this.getDroneStats(type);
+        return {
+            type: type,
+            col: col,
+            row: row,
+            x: col * this.gridSize + this.gridSize / 2,
+            y: row * this.gridSize + this.gridSize / 2,
+            targetX: null,
+            targetY: null,
+            health: stats.health,
+            maxHealth: stats.health,
+            damage: stats.damage,
+            range: stats.range,
+            speed: stats.speed,
+            attackCooldown: 0,
+            isSelected: false,
+            hasShield: false,
+            shieldTimer: 0
+        };
+    }
+    
+    getDroneStats(type) {
+        const stats = {
+            'scout': { health: 50, damage: 12, range: 120, speed: 3 },
+            'combat': { health: 100, damage: 25, range: 150, speed: 1.5 },
+            'support': { health: 60, damage: 8, range: 180, speed: 2 }
+        };
+        return stats[type];
+    }
+    
+    getDroneCost(type) {
+        const costs = {
+            'scout': 20,
+            'combat': 50,
+            'support': 30
+        };
+        return costs[type];
     }
     
     getDroneTypeName(type) {
@@ -241,96 +389,6 @@ class Game {
             'reinforcement': '紧急增援'
         };
         return names[skill] || skill;
-    }
-    
-    handleCanvasClick(e) {
-        if (this.gameState !== 'playing') return;
-        
-        const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        
-        if (this.selectedSkill) {
-            this.useSkill(this.selectedSkill, x, y);
-            return;
-        }
-        
-        if (this.selectedDroneType) {
-            this.placeDrone(x, y);
-        }
-    }
-    
-    placeDrone(x, y) {
-        const col = Math.floor(x / this.gridSize);
-        const row = Math.floor(y / this.gridSize);
-        
-        if (col < 0 || col >= this.gridCols || row < 0 || row >= this.gridRows) {
-            this.log('无法在此位置放置无人机');
-            return;
-        }
-        
-        const cost = this.getDroneCost(this.selectedDroneType);
-        if (this.energy < cost) {
-            this.log('能量不足！');
-            return;
-        }
-        
-        const overlap = this.drones.some(drone => 
-            Math.abs(drone.col - col) < 1 && Math.abs(drone.row - row) < 1
-        );
-        
-        if (overlap) {
-            this.log('此位置已有无人机');
-            return;
-        }
-        
-        this.energy -= cost;
-        const drone = this.createDrone(this.selectedDroneType, col, row);
-        this.drones.push(drone);
-        
-        this.createPlacementEffect(x, y);
-        this.updateUI();
-        this.log(`部署了一架${this.getDroneTypeName(this.selectedDroneType)}无人机`);
-    }
-    
-    createDrone(type, col, row) {
-        const stats = this.getDroneStats(type);
-        return {
-            type: type,
-            col: col,
-            row: row,
-            x: col * this.gridSize + this.gridSize / 2,
-            y: row * this.gridSize + this.gridSize / 2,
-            targetX: null,
-            targetY: null,
-            health: stats.health,
-            maxHealth: stats.health,
-            damage: stats.damage,
-            range: stats.range,
-            speed: stats.speed,
-            attackCooldown: 0,
-            isSelected: false,
-            hasShield: false,
-            shieldTimer: 0
-        };
-    }
-    
-    getDroneStats(type) {
-        const stats = {
-            'scout': { health: 50, damage: 8, range: 100, speed: 3 },
-            'combat': { health: 100, damage: 20, range: 120, speed: 1.5 },
-            'support': { health: 60, damage: 5, range: 150, speed: 2 }
-        };
-        return stats[type];
-    }
-    
-    getDroneCost(type) {
-        const costs = {
-            'scout': 20,
-            'combat': 50,
-            'support': 30
-        };
-        return costs[type];
     }
     
     applyFormation() {
@@ -392,7 +450,7 @@ class Game {
     spawnEnemies(count) {
         for (let i = 0; i < count; i++) {
             setTimeout(() => {
-                if (this.gameState === 'playing') {
+                if (this.gameState === 'playing' || this.gameState === 'paused') {
                     const side = Math.floor(Math.random() * 4);
                     let x, y;
                     
@@ -437,8 +495,8 @@ class Game {
     
     getEnemyStats(type) {
         const stats = {
-            'basic': { health: 30, damage: 10, speed: 1.5 },
-            'heavy': { health: 80, damage: 20, speed: 0.8 }
+            'basic': { health: 40, damage: 12, speed: 1.5 },
+            'heavy': { health: 100, damage: 25, speed: 0.8 }
         };
         return stats[type];
     }
@@ -447,7 +505,11 @@ class Game {
         switch (skill) {
             case 'orbital-laser':
                 if (this.crystals < 100) {
-                    this.log('晶石不足！');
+                    this.log('晶石不足！需要 100 晶石');
+                    return;
+                }
+                if (this.skillCooldowns['orbital-laser'] > 0) {
+                    this.log('轨道激光冷却中...');
                     return;
                 }
                 this.crystals -= 100;
@@ -457,7 +519,11 @@ class Game {
                 
             case 'emp':
                 if (this.energy < 150) {
-                    this.log('能量不足！');
+                    this.log('能量不足！需要 150 能量');
+                    return;
+                }
+                if (this.skillCooldowns['emp'] > 0) {
+                    this.log('电磁脉冲冷却中...');
                     return;
                 }
                 this.energy -= 150;
@@ -467,7 +533,15 @@ class Game {
                 
             case 'shield':
                 if (this.energy < 80) {
-                    this.log('能量不足！');
+                    this.log('能量不足！需要 80 能量');
+                    return;
+                }
+                if (this.skillCooldowns['shield'] > 0) {
+                    this.log('量子护盾冷却中...');
+                    return;
+                }
+                if (this.drones.length === 0) {
+                    this.log('没有无人机可以保护！');
                     return;
                 }
                 this.energy -= 80;
@@ -477,7 +551,11 @@ class Game {
                 
             case 'reinforcement':
                 if (this.crystals < 200) {
-                    this.log('晶石不足！');
+                    this.log('晶石不足！需要 200 晶石');
+                    return;
+                }
+                if (this.skillCooldowns['reinforcement'] > 0) {
+                    this.log('紧急增援冷却中...');
                     return;
                 }
                 this.crystals -= 200;
@@ -497,15 +575,16 @@ class Game {
         this.enemies.forEach(enemy => {
             const dist = Math.hypot(enemy.x - x, enemy.y - y);
             if (dist < 150) {
-                enemy.health -= 100;
+                enemy.health -= 150;
                 this.createDamageEffect(enemy.x, enemy.y);
+                this.log('轨道激光击中敌人！');
             }
         });
         
         this.crystalNodes.forEach(crystal => {
             const dist = Math.hypot(crystal.x - x, crystal.y - y);
             if (dist < 150) {
-                crystal.health -= 50;
+                crystal.health -= 80;
             }
         });
         
@@ -515,25 +594,27 @@ class Game {
     emp(x, y) {
         this.createEMPEffect(x, y);
         
+        let stunnedCount = 0;
         this.enemies.forEach(enemy => {
             const dist = Math.hypot(enemy.x - x, enemy.y - y);
             if (dist < 200) {
                 enemy.stunned = true;
-                enemy.stunTimer = 180;
+                enemy.stunTimer = 300;
+                stunnedCount++;
             }
         });
         
-        this.log('电磁脉冲释放！敌人已瘫痪！');
+        this.log(`电磁脉冲释放！${stunnedCount}个敌人已瘫痪！`);
     }
     
     activateShield() {
         this.drones.forEach(drone => {
             drone.hasShield = true;
-            drone.shieldTimer = 300;
+            drone.shieldTimer = 600;
         });
         
         this.createShieldEffect();
-        this.log('量子护盾已激活！');
+        this.log('量子护盾已激活！所有无人机获得5秒免疫！');
     }
     
     reinforcement() {
@@ -558,12 +639,12 @@ class Game {
         this.log('紧急增援到达！3架战斗型无人机已部署！');
     }
     
-    update(deltaTime) {
+    update() {
         if (this.gameState !== 'playing') return;
         
         for (let skill in this.skillCooldowns) {
             if (this.skillCooldowns[skill] > 0) {
-                this.skillCooldowns[skill] -= deltaTime / 1000;
+                this.skillCooldowns[skill] -= (16 * this.gameSpeed) / 1000;
                 if (this.skillCooldowns[skill] <= 0) {
                     this.skillCooldowns[skill] = 0;
                 }
@@ -571,16 +652,16 @@ class Game {
         }
         this.updateSkillUI();
         
-        this.updateDrones(deltaTime);
-        this.updateEnemies(deltaTime);
-        this.updateProjectiles(deltaTime);
-        this.updateParticles(deltaTime);
+        this.updateDrones();
+        this.updateEnemies();
+        this.updateProjectiles();
+        this.updateParticles();
         this.checkCollisions();
         this.checkWaveStatus();
         this.updateUI();
     }
     
-    updateDrones(deltaTime) {
+    updateDrones() {
         this.drones.forEach(drone => {
             if (drone.hasShield) {
                 drone.shieldTimer--;
@@ -595,8 +676,8 @@ class Game {
                 const dist = Math.hypot(dx, dy);
                 
                 if (dist > 5) {
-                    drone.x += (dx / dist) * drone.speed;
-                    drone.y += (dy / dist) * drone.speed;
+                    drone.x += (dx / dist) * drone.speed * this.gameSpeed;
+                    drone.y += (dy / dist) * drone.speed * this.gameSpeed;
                 } else {
                     drone.targetX = null;
                     drone.targetY = null;
@@ -604,7 +685,7 @@ class Game {
             }
             
             if (drone.attackCooldown > 0) {
-                drone.attackCooldown--;
+                drone.attackCooldown -= this.gameSpeed;
             }
             
             if (drone.attackCooldown <= 0) {
@@ -629,7 +710,7 @@ class Game {
             }
         });
         
-        if (!closestTarget && drone.type === 'combat') {
+        if (drone.type !== 'support') {
             this.crystalNodes.forEach(crystal => {
                 if (crystal.health > 0) {
                     const dist = Math.hypot(crystal.x - drone.x, crystal.y - drone.y);
@@ -648,7 +729,7 @@ class Game {
         if (drone.type === 'support') {
             const healTarget = this.findHealTarget(drone);
             if (healTarget) {
-                healTarget.health = Math.min(healTarget.maxHealth, healTarget.health + 15);
+                healTarget.health = Math.min(healTarget.maxHealth, healTarget.health + 20);
                 this.createHealEffect(healTarget.x, healTarget.y);
             }
         } else {
@@ -659,7 +740,7 @@ class Game {
                 targetY: target.y,
                 target: target,
                 damage: drone.damage,
-                speed: 8,
+                speed: 10,
                 color: this.getDroneProjectileColor(drone.type)
             });
             
@@ -676,7 +757,7 @@ class Game {
                 const dist = Math.hypot(otherDrone.x - drone.x, otherDrone.y - drone.y);
                 const healthPercent = otherDrone.health / otherDrone.maxHealth;
                 
-                if (dist < drone.range && healthPercent < 0.8 && healthPercent < lowestHealthPercent) {
+                if (dist < drone.range && healthPercent < 0.9 && healthPercent < lowestHealthPercent) {
                     lowestHealthPercent = healthPercent;
                     lowestHealthTarget = otherDrone;
                 }
@@ -695,10 +776,10 @@ class Game {
         return colors[type] || '#ffffff';
     }
     
-    updateEnemies(deltaTime) {
+    updateEnemies() {
         this.enemies.forEach(enemy => {
             if (enemy.stunned) {
-                enemy.stunTimer--;
+                enemy.stunTimer -= this.gameSpeed;
                 if (enemy.stunTimer <= 0) {
                     enemy.stunned = false;
                 }
@@ -706,7 +787,7 @@ class Game {
             }
             
             if (enemy.attackCooldown > 0) {
-                enemy.attackCooldown--;
+                enemy.attackCooldown -= this.gameSpeed;
             }
             
             const target = this.findEnemyTarget(enemy);
@@ -717,8 +798,8 @@ class Game {
                 const dist = Math.hypot(dx, dy);
                 
                 if (dist > 50) {
-                    enemy.x += (dx / dist) * enemy.speed;
-                    enemy.y += (dy / dist) * enemy.speed;
+                    enemy.x += (dx / dist) * enemy.speed * this.gameSpeed;
+                    enemy.y += (dy / dist) * enemy.speed * this.gameSpeed;
                 } else if (enemy.attackCooldown <= 0) {
                     this.enemyAttack(enemy, target);
                     enemy.attackCooldown = 90;
@@ -752,6 +833,7 @@ class Game {
     enemyAttack(enemy, target) {
         if (target.hasShield) {
             this.createBlockEffect(target.x, target.y);
+            this.log('护盾阻挡了攻击！');
             return;
         }
         
@@ -759,32 +841,32 @@ class Game {
         this.createDamageEffect(target.x, target.y);
     }
     
-    updateProjectiles(deltaTime) {
+    updateProjectiles() {
         this.projectiles = this.projectiles.filter(proj => {
             const dx = proj.targetX - proj.x;
             const dy = proj.targetY - proj.y;
             const dist = Math.hypot(dx, dy);
             
             if (dist < proj.speed) {
-                if (proj.target) {
+                if (proj.target && proj.target.health !== undefined) {
                     proj.target.health -= proj.damage;
                     this.createHitEffect(proj.target.x, proj.target.y, proj.color);
                 }
                 return false;
             }
             
-            proj.x += (dx / dist) * proj.speed;
-            proj.y += (dy / dist) * proj.speed;
+            proj.x += (dx / dist) * proj.speed * this.gameSpeed;
+            proj.y += (dy / dist) * proj.speed * this.gameSpeed;
             
             return true;
         });
     }
     
-    updateParticles(deltaTime) {
+    updateParticles() {
         this.particles = this.particles.filter(particle => {
-            particle.life--;
-            particle.x += particle.vx;
-            particle.y += particle.vy;
+            particle.life -= this.gameSpeed;
+            particle.x += particle.vx * this.gameSpeed;
+            particle.y += particle.vy * this.gameSpeed;
             particle.vx *= 0.98;
             particle.vy *= 0.98;
             
@@ -805,8 +887,9 @@ class Game {
         this.enemies = this.enemies.filter(enemy => {
             if (enemy.health <= 0) {
                 this.createExplosion(enemy.x, enemy.y, '#ff4757');
-                this.energy += 15;
+                this.energy += 20;
                 this.totalKills++;
+                this.log(`消灭了一个${enemy.type === 'heavy' ? '重型' : '基础'}敌人！+20能量`);
                 return false;
             }
             return true;
@@ -832,7 +915,7 @@ class Game {
                     this.currentWave++;
                     document.getElementById('game-status').textContent = '准备中';
                     
-                    const waveBonus = 30 + this.currentWave * 10;
+                    const waveBonus = 30 + this.currentWave * 15;
                     this.energy += waveBonus;
                     
                     this.log(`波次 ${this.currentWave - 1} 完成！获得 ${waveBonus} 能量奖励。`);
@@ -843,116 +926,99 @@ class Game {
     }
     
     createPlacementEffect(x, y) {
-        for (let i = 0; i < 20; i++) {
-            const angle = (i / 20) * Math.PI * 2;
+        for (let i = 0; i < 25; i++) {
+            const angle = (i / 25) * Math.PI * 2;
             this.particles.push({
                 x: x,
                 y: y,
-                vx: Math.cos(angle) * (2 + Math.random() * 2),
-                vy: Math.sin(angle) * (2 + Math.random() * 2),
-                life: 30,
-                maxLife: 30,
+                vx: Math.cos(angle) * (2 + Math.random() * 3),
+                vy: Math.sin(angle) * (2 + Math.random() * 3),
+                life: 40,
+                maxLife: 40,
                 color: '#00ffff',
-                size: 3
+                size: 4
             });
         }
     }
     
     createMuzzleFlash(x, y) {
-        for (let i = 0; i < 5; i++) {
-            this.particles.push({
-                x: x,
-                y: y,
-                vx: (Math.random() - 0.5) * 4,
-                vy: (Math.random() - 0.5) * 4,
-                life: 10,
-                maxLife: 10,
-                color: '#ffff00',
-                size: 2
-            });
-        }
-    }
-    
-    createHitEffect(x, y, color) {
         for (let i = 0; i < 8; i++) {
-            const angle = (i / 8) * Math.PI * 2;
-            this.particles.push({
-                x: x,
-                y: y,
-                vx: Math.cos(angle) * 2,
-                vy: Math.sin(angle) * 2,
-                life: 15,
-                maxLife: 15,
-                color: color,
-                size: 2
-            });
-        }
-    }
-    
-    createDamageEffect(x, y) {
-        for (let i = 0; i < 10; i++) {
             this.particles.push({
                 x: x,
                 y: y,
                 vx: (Math.random() - 0.5) * 5,
                 vy: (Math.random() - 0.5) * 5,
+                life: 15,
+                maxLife: 15,
+                color: '#ffff00',
+                size: 3
+            });
+        }
+    }
+    
+    createHitEffect(x, y, color) {
+        for (let i = 0; i < 12; i++) {
+            const angle = (i / 12) * Math.PI * 2;
+            this.particles.push({
+                x: x,
+                y: y,
+                vx: Math.cos(angle) * 3,
+                vy: Math.sin(angle) * 3,
                 life: 20,
                 maxLife: 20,
-                color: '#ff4757',
+                color: color,
                 size: 3
+            });
+        }
+    }
+    
+    createDamageEffect(x, y) {
+        for (let i = 0; i < 15; i++) {
+            this.particles.push({
+                x: x,
+                y: y,
+                vx: (Math.random() - 0.5) * 6,
+                vy: (Math.random() - 0.5) * 6,
+                life: 25,
+                maxLife: 25,
+                color: '#ff4757',
+                size: 4
             });
         }
     }
     
     createHealEffect(x, y) {
-        for (let i = 0; i < 15; i++) {
+        for (let i = 0; i < 20; i++) {
             this.particles.push({
-                x: x + (Math.random() - 0.5) * 20,
-                y: y + (Math.random() - 0.5) * 20,
-                vx: (Math.random() - 0.5) * 1,
-                vy: -1 - Math.random(),
-                life: 30,
-                maxLife: 30,
+                x: x + (Math.random() - 0.5) * 25,
+                y: y + (Math.random() - 0.5) * 25,
+                vx: (Math.random() - 0.5) * 1.5,
+                vy: -1.5 - Math.random(),
+                life: 35,
+                maxLife: 35,
                 color: '#a8e6cf',
-                size: 2
-            });
-        }
-    }
-    
-    createBlockEffect(x, y) {
-        for (let i = 0; i < 10; i++) {
-            const angle = (i / 10) * Math.PI * 2;
-            this.particles.push({
-                x: x + Math.cos(angle) * 20,
-                y: y + Math.sin(angle) * 20,
-                vx: Math.cos(angle) * 1,
-                vy: Math.sin(angle) * 1,
-                life: 20,
-                maxLife: 20,
-                color: '#70a1ff',
                 size: 3
             });
         }
     }
     
-    createExplosion(x, y, color) {
-        for (let i = 0; i < 30; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const speed = 2 + Math.random() * 4;
+    createBlockEffect(x, y) {
+        for (let i = 0; i < 15; i++) {
+            const angle = (i / 15) * Math.PI * 2;
             this.particles.push({
-                x: x,
-                y: y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                life: 40,
-                maxLife: 40,
-                color: color,
-                size: 2 + Math.random() * 3
+                x: x + Math.cos(angle) * 25,
+                y: y + Math.sin(angle) * 25,
+                vx: Math.cos(angle) * 1.5,
+                vy: Math.sin(angle) * 1.5,
+                life: 25,
+                maxLife: 25,
+                color: '#70a1ff',
+                size: 4
             });
         }
     }
     
-    createCrystalExplosion(x, y) {
+    createExplosion(x, y, color) {
         for (let i = 0; i < 40; i++) {
             const angle = Math.random() * Math.PI * 2;
             const speed = 3 + Math.random() * 5;
@@ -963,81 +1029,98 @@ class Game {
                 vy: Math.sin(angle) * speed,
                 life: 50,
                 maxLife: 50,
+                color: color,
+                size: 3 + Math.random() * 4
+            });
+        }
+    }
+    
+    createCrystalExplosion(x, y) {
+        for (let i = 0; i < 50; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 4 + Math.random() * 6;
+            this.particles.push({
+                x: x,
+                y: y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                life: 60,
+                maxLife: 60,
                 color: '#ffd700',
-                size: 2 + Math.random() * 4
+                size: 3 + Math.random() * 5
             });
         }
     }
     
     createLaserEffect(x, y) {
-        for (let i = 0; i < 50; i++) {
+        for (let i = 0; i < 60; i++) {
             const angle = Math.random() * Math.PI * 2;
             const dist = Math.random() * 150;
             this.particles.push({
                 x: x + Math.cos(angle) * dist,
                 y: y + Math.sin(angle) * dist,
-                vx: (Math.random() - 0.5) * 2,
-                vy: (Math.random() - 0.5) * 2,
-                life: 60,
-                maxLife: 60,
+                vx: (Math.random() - 0.5) * 3,
+                vy: (Math.random() - 0.5) * 3,
+                life: 80,
+                maxLife: 80,
                 color: i % 2 === 0 ? '#ff4757' : '#ff3838',
-                size: 2 + Math.random() * 3
+                size: 3 + Math.random() * 4
             });
         }
     }
     
     createEMPEffect(x, y) {
-        for (let ring = 0; ring < 5; ring++) {
+        for (let ring = 0; ring < 6; ring++) {
             setTimeout(() => {
-                for (let i = 0; i < 30; i++) {
-                    const angle = (i / 30) * Math.PI * 2;
-                    const dist = (ring + 1) * 40;
+                for (let i = 0; i < 36; i++) {
+                    const angle = (i / 36) * Math.PI * 2;
+                    const dist = (ring + 1) * 35;
                     this.particles.push({
                         x: x + Math.cos(angle) * dist,
                         y: y + Math.sin(angle) * dist,
-                        vx: Math.cos(angle) * 0.5,
-                        vy: Math.sin(angle) * 0.5,
-                        life: 30,
-                        maxLife: 30,
+                        vx: Math.cos(angle) * 0.8,
+                        vy: Math.sin(angle) * 0.8,
+                        life: 35,
+                        maxLife: 35,
                         color: '#5352ed',
-                        size: 3
+                        size: 4
                     });
                 }
-            }, ring * 100);
+            }, ring * 80);
         }
     }
     
     createShieldEffect() {
         this.drones.forEach(drone => {
-            for (let i = 0; i < 20; i++) {
-                const angle = (i / 20) * Math.PI * 2;
+            for (let i = 0; i < 25; i++) {
+                const angle = (i / 25) * Math.PI * 2;
                 this.particles.push({
-                    x: drone.x + Math.cos(angle) * 25,
-                    y: drone.y + Math.sin(angle) * 25,
-                    vx: Math.cos(angle) * 0.5,
-                    vy: Math.sin(angle) * 0.5,
-                    life: 40,
-                    maxLife: 40,
+                    x: drone.x + Math.cos(angle) * 30,
+                    y: drone.y + Math.sin(angle) * 30,
+                    vx: Math.cos(angle) * 0.8,
+                    vy: Math.sin(angle) * 0.8,
+                    life: 50,
+                    maxLife: 50,
                     color: '#70a1ff',
-                    size: 3
+                    size: 4
                 });
             }
         });
     }
     
     createWaveEffect() {
-        for (let i = 0; i < 100; i++) {
+        for (let i = 0; i < 120; i++) {
             const x = Math.random() * this.canvas.width;
             const y = Math.random() * this.canvas.height;
             this.particles.push({
                 x: x,
                 y: y,
-                vx: (Math.random() - 0.5) * 1,
-                vy: (Math.random() - 0.5) * 1,
-                life: 60,
-                maxLife: 60,
+                vx: (Math.random() - 0.5) * 1.5,
+                vy: (Math.random() - 0.5) * 1.5,
+                life: 70,
+                maxLife: 70,
                 color: '#ff6b6b',
-                size: 1 + Math.random() * 2
+                size: 2 + Math.random() * 3
             });
         }
     }
@@ -1053,10 +1136,11 @@ class Game {
         this.drawProjectiles();
         this.drawParticles();
         this.drawSkillIndicator();
+        this.drawDragPreview();
     }
     
     drawGrid() {
-        this.ctx.strokeStyle = 'rgba(0, 255, 255, 0.1)';
+        this.ctx.strokeStyle = 'rgba(0, 255, 255, 0.15)';
         this.ctx.lineWidth = 1;
         
         for (let col = 0; col <= this.gridCols; col++) {
@@ -1080,7 +1164,7 @@ class Game {
             this.ctx.translate(crystal.x, crystal.y);
             this.ctx.rotate(Date.now() / 1000);
             
-            const gradient = this.ctx.createRadialGradient(0, 0, 5, 0, 0, 20);
+            const gradient = this.ctx.createRadialGradient(0, 0, 5, 0, 0, 25);
             gradient.addColorStop(0, '#ffd700');
             gradient.addColorStop(0.5, '#ffa500');
             gradient.addColorStop(1, 'rgba(255, 165, 0, 0)');
@@ -1089,8 +1173,8 @@ class Game {
             this.ctx.beginPath();
             for (let i = 0; i < 6; i++) {
                 const angle = (i / 6) * Math.PI * 2;
-                const x = Math.cos(angle) * 15;
-                const y = Math.sin(angle) * 15;
+                const x = Math.cos(angle) * 18;
+                const y = Math.sin(angle) * 18;
                 if (i === 0) {
                     this.ctx.moveTo(x, y);
                 } else {
@@ -1107,98 +1191,111 @@ class Game {
             this.ctx.restore();
             
             const healthPercent = crystal.health / crystal.maxHealth;
-            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            this.ctx.fillRect(crystal.x - 15, crystal.y - 30, 30, 4);
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            this.ctx.fillRect(crystal.x - 20, crystal.y - 35, 40, 5);
             this.ctx.fillStyle = healthPercent > 0.5 ? '#ffd700' : '#ff4757';
-            this.ctx.fillRect(crystal.x - 15, crystal.y - 30, 30 * healthPercent, 4);
+            this.ctx.fillRect(crystal.x - 20, crystal.y - 35, 40 * healthPercent, 5);
+            
+            this.ctx.fillStyle = '#ffd700';
+            this.ctx.font = '10px sans-serif';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText(`${crystal.crystalValue}晶石`, crystal.x, crystal.y + 30);
         });
     }
     
     drawDrones() {
         this.drones.forEach(drone => {
             const colors = {
-                'scout': { main: '#4ecdc4', glow: 'rgba(78, 205, 196, 0.3)' },
-                'combat': { main: '#ff6b6b', glow: 'rgba(255, 107, 107, 0.3)' },
-                'support': { main: '#a8e6cf', glow: 'rgba(168, 230, 207, 0.3)' }
+                'scout': { main: '#4ecdc4', glow: 'rgba(78, 205, 196, 0.4)' },
+                'combat': { main: '#ff6b6b', glow: 'rgba(255, 107, 107, 0.4)' },
+                'support': { main: '#a8e6cf', glow: 'rgba(168, 230, 207, 0.4)' }
             };
             
             const droneColors = colors[drone.type];
             
             if (drone.hasShield) {
-                this.ctx.strokeStyle = 'rgba(112, 161, 255, 0.5)';
-                this.ctx.lineWidth = 2;
+                this.ctx.strokeStyle = 'rgba(112, 161, 255, 0.7)';
+                this.ctx.lineWidth = 3;
                 this.ctx.beginPath();
-                this.ctx.arc(drone.x, drone.y, 25, 0, Math.PI * 2);
+                this.ctx.arc(drone.x, drone.y, 28, 0, Math.PI * 2);
                 this.ctx.stroke();
+                
+                const shieldGradient = this.ctx.createRadialGradient(drone.x, drone.y, 20, drone.x, drone.y, 28);
+                shieldGradient.addColorStop(0, 'rgba(112, 161, 255, 0)');
+                shieldGradient.addColorStop(1, 'rgba(112, 161, 255, 0.2)');
+                this.ctx.fillStyle = shieldGradient;
+                this.ctx.beginPath();
+                this.ctx.arc(drone.x, drone.y, 28, 0, Math.PI * 2);
+                this.ctx.fill();
             }
             
-            const gradient = this.ctx.createRadialGradient(drone.x, drone.y, 5, drone.x, drone.y, 20);
+            const gradient = this.ctx.createRadialGradient(drone.x, drone.y, 5, drone.x, drone.y, 25);
             gradient.addColorStop(0, droneColors.glow);
             gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
             this.ctx.fillStyle = gradient;
             this.ctx.beginPath();
-            this.ctx.arc(drone.x, drone.y, 20, 0, Math.PI * 2);
+            this.ctx.arc(drone.x, drone.y, 25, 0, Math.PI * 2);
             this.ctx.fill();
             
             this.ctx.fillStyle = droneColors.main;
             this.ctx.beginPath();
             
             if (drone.type === 'scout') {
-                this.ctx.moveTo(drone.x, drone.y - 12);
-                this.ctx.lineTo(drone.x - 10, drone.y + 8);
-                this.ctx.lineTo(drone.x + 10, drone.y + 8);
+                this.ctx.moveTo(drone.x, drone.y - 14);
+                this.ctx.lineTo(drone.x - 12, drone.y + 10);
+                this.ctx.lineTo(drone.x + 12, drone.y + 10);
             } else if (drone.type === 'combat') {
-                this.ctx.arc(drone.x, drone.y, 10, 0, Math.PI * 2);
+                this.ctx.arc(drone.x, drone.y, 12, 0, Math.PI * 2);
             } else {
-                this.ctx.rect(drone.x - 8, drone.y - 8, 16, 16);
+                this.ctx.rect(drone.x - 10, drone.y - 10, 20, 20);
             }
             
             this.ctx.closePath();
             this.ctx.fill();
             
             this.ctx.strokeStyle = '#ffffff';
-            this.ctx.lineWidth = 1.5;
+            this.ctx.lineWidth = 2;
             this.ctx.stroke();
             
-            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
             this.ctx.beginPath();
-            this.ctx.arc(drone.x, drone.y, 3, 0, Math.PI * 2);
+            this.ctx.arc(drone.x, drone.y, 4, 0, Math.PI * 2);
             this.ctx.fill();
             
             const healthPercent = drone.health / drone.maxHealth;
-            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            this.ctx.fillRect(drone.x - 12, drone.y - 20, 24, 3);
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            this.ctx.fillRect(drone.x - 15, drone.y - 25, 30, 4);
             this.ctx.fillStyle = healthPercent > 0.5 ? '#00ff80' : (healthPercent > 0.25 ? '#ffa500' : '#ff4757');
-            this.ctx.fillRect(drone.x - 12, drone.y - 20, 24 * healthPercent, 3);
+            this.ctx.fillRect(drone.x - 15, drone.y - 25, 30 * healthPercent, 4);
         });
     }
     
     drawEnemies() {
         this.enemies.forEach(enemy => {
             const colors = {
-                'basic': { main: '#ff4757', glow: 'rgba(255, 71, 87, 0.3)' },
-                'heavy': { main: '#ff3838', glow: 'rgba(255, 56, 56, 0.4)' }
+                'basic': { main: '#ff4757', glow: 'rgba(255, 71, 87, 0.4)' },
+                'heavy': { main: '#ff3838', glow: 'rgba(255, 56, 56, 0.5)' }
             };
             
             const enemyColors = colors[enemy.type];
-            const size = enemy.type === 'heavy' ? 18 : 12;
+            const size = enemy.type === 'heavy' ? 20 : 14;
             
             if (enemy.stunned) {
-                this.ctx.strokeStyle = 'rgba(83, 82, 237, 0.5)';
-                this.ctx.lineWidth = 2;
-                this.ctx.setLineDash([5, 5]);
+                this.ctx.strokeStyle = 'rgba(83, 82, 237, 0.7)';
+                this.ctx.lineWidth = 3;
+                this.ctx.setLineDash([6, 4]);
                 this.ctx.beginPath();
-                this.ctx.arc(enemy.x, enemy.y, size + 8, 0, Math.PI * 2);
+                this.ctx.arc(enemy.x, enemy.y, size + 10, 0, Math.PI * 2);
                 this.ctx.stroke();
                 this.ctx.setLineDash([]);
             }
             
-            const gradient = this.ctx.createRadialGradient(enemy.x, enemy.y, 5, enemy.x, enemy.y, size + 8);
+            const gradient = this.ctx.createRadialGradient(enemy.x, enemy.y, 5, enemy.x, enemy.y, size + 10);
             gradient.addColorStop(0, enemyColors.glow);
             gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
             this.ctx.fillStyle = gradient;
             this.ctx.beginPath();
-            this.ctx.arc(enemy.x, enemy.y, size + 8, 0, Math.PI * 2);
+            this.ctx.arc(enemy.x, enemy.y, size + 10, 0, Math.PI * 2);
             this.ctx.fill();
             
             this.ctx.fillStyle = enemyColors.main;
@@ -1219,30 +1316,31 @@ class Game {
             this.ctx.fill();
             
             this.ctx.strokeStyle = '#ffffff';
-            this.ctx.lineWidth = 1.5;
+            this.ctx.lineWidth = 2;
             this.ctx.stroke();
             
             const healthPercent = enemy.health / enemy.maxHealth;
-            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            this.ctx.fillRect(enemy.x - 15, enemy.y - size - 10, 30, 3);
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            this.ctx.fillRect(enemy.x - 18, enemy.y - size - 12, 36, 5);
             this.ctx.fillStyle = '#ff4757';
-            this.ctx.fillRect(enemy.x - 15, enemy.y - size - 10, 30 * healthPercent, 3);
+            this.ctx.fillRect(enemy.x - 18, enemy.y - size - 12, 36 * healthPercent, 5);
         });
     }
     
     drawProjectiles() {
         this.projectiles.forEach(proj => {
-            const gradient = this.ctx.createRadialGradient(proj.x, proj.y, 1, proj.x, proj.y, 5);
-            gradient.addColorStop(0, proj.color);
+            const gradient = this.ctx.createRadialGradient(proj.x, proj.y, 1, proj.x, proj.y, 6);
+            gradient.addColorStop(0, '#ffffff');
+            gradient.addColorStop(0.5, proj.color);
             gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
             this.ctx.fillStyle = gradient;
             this.ctx.beginPath();
-            this.ctx.arc(proj.x, proj.y, 5, 0, Math.PI * 2);
+            this.ctx.arc(proj.x, proj.y, 6, 0, Math.PI * 2);
             this.ctx.fill();
             
             this.ctx.fillStyle = '#ffffff';
             this.ctx.beginPath();
-            this.ctx.arc(proj.x, proj.y, 2, 0, Math.PI * 2);
+            this.ctx.arc(proj.x, proj.y, 3, 0, Math.PI * 2);
             this.ctx.fill();
         });
     }
@@ -1267,10 +1365,68 @@ class Game {
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             
             this.ctx.fillStyle = '#ff6b6b';
-            this.ctx.font = '16px sans-serif';
+            this.ctx.font = 'bold 18px sans-serif';
             this.ctx.textAlign = 'center';
             this.ctx.fillText(`点击战场释放: ${this.getSkillName(this.selectedSkill)}`, 
-                this.canvas.width / 2, 30);
+                this.canvas.width / 2, 35);
+                
+            this.ctx.strokeStyle = '#ff6b6b';
+            this.ctx.lineWidth = 2;
+            this.ctx.setLineDash([10, 5]);
+            this.ctx.strokeRect(10, 10, this.canvas.width - 20, this.canvas.height - 20);
+            this.ctx.setLineDash([]);
+        }
+    }
+    
+    drawDragPreview() {
+        if (this.isDragging && this.selectedDroneType) {
+            const col = Math.floor(this.dragPreviewX / this.gridSize);
+            const row = Math.floor(this.dragPreviewY / this.gridSize);
+            
+            const x = col * this.gridSize + this.gridSize / 2;
+            const y = row * this.gridSize + this.gridSize / 2;
+            
+            const canPlace = col >= 0 && col < this.gridCols && 
+                            row >= 0 && row < this.gridRows &&
+                            !this.drones.some(drone => {
+                                const droneCol = Math.floor(drone.x / this.gridSize);
+                                const droneRow = Math.floor(drone.y / this.gridSize);
+                                return Math.abs(droneCol - col) < 1 && Math.abs(droneRow - row) < 1;
+                            });
+            
+            const colors = {
+                'scout': '#4ecdc4',
+                'combat': '#ff6b6b',
+                'support': '#a8e6cf'
+            };
+            
+            this.ctx.globalAlpha = 0.5;
+            this.ctx.fillStyle = canPlace ? colors[this.selectedDroneType] : '#666666';
+            this.ctx.strokeStyle = canPlace ? '#ffffff' : '#ff0000';
+            this.ctx.lineWidth = 2;
+            
+            this.ctx.beginPath();
+            if (this.selectedDroneType === 'scout') {
+                this.ctx.moveTo(x, y - 14);
+                this.ctx.lineTo(x - 12, y + 10);
+                this.ctx.lineTo(x + 12, y + 10);
+            } else if (this.selectedDroneType === 'combat') {
+                this.ctx.arc(x, y, 12, 0, Math.PI * 2);
+            } else {
+                this.ctx.rect(x - 10, y - 10, 20, 20);
+            }
+            this.ctx.closePath();
+            this.ctx.fill();
+            this.ctx.stroke();
+            
+            this.ctx.globalAlpha = 1;
+            
+            this.ctx.fillStyle = canPlace ? '#00ff80' : '#ff4757';
+            this.ctx.font = '12px sans-serif';
+            this.ctx.textAlign = 'center';
+            const cost = this.getDroneCost(this.selectedDroneType);
+            const canAfford = this.energy >= cost;
+            this.ctx.fillText(canAfford ? `点击放置 (${cost}能量)` : '能量不足!', x, y + 35);
         }
     }
     
@@ -1292,13 +1448,21 @@ class Game {
             switch (command) {
                 case 'move':
                     if (parts.length >= 3) {
-                        const x = parseInt(parts[1]) * this.gridSize + this.gridSize / 2;
-                        const y = parseInt(parts[2]) * this.gridSize + this.gridSize / 2;
-                        this.drones.forEach(drone => {
-                            drone.targetX = x + (Math.random() - 0.5) * 50;
-                            drone.targetY = y + (Math.random() - 0.5) * 50;
-                        });
-                        this.log(`集群移动至 (${parts[1]}, ${parts[2]})`);
+                        const targetCol = parseInt(parts[1]);
+                        const targetRow = parseInt(parts[2]);
+                        
+                        if (targetCol >= 0 && targetCol < this.gridCols && 
+                            targetRow >= 0 && targetRow < this.gridRows) {
+                            const x = targetCol * this.gridSize + this.gridSize / 2;
+                            const y = targetRow * this.gridSize + this.gridSize / 2;
+                            this.drones.forEach(drone => {
+                                drone.targetX = x + (Math.random() - 0.5) * 60;
+                                drone.targetY = y + (Math.random() - 0.5) * 60;
+                            });
+                            this.log(`集群移动至 (${targetCol}, ${targetRow})`);
+                        } else {
+                            this.log('坐标超出范围');
+                        }
                     }
                     break;
                     
@@ -1315,16 +1479,23 @@ class Game {
                             document.querySelector(`.formation-btn[data-formation="${formation}"]`)?.classList.add('active');
                             this.applyFormation();
                             this.log(`编队切换为: ${this.getFormationName(formation)}`);
+                        } else {
+                            this.log('未知编队类型');
                         }
                     }
                     break;
                     
                 case 'scout':
-                    this.drones.filter(d => d.type === 'scout').forEach(drone => {
-                        drone.targetX = Math.random() * this.canvas.width;
-                        drone.targetY = Math.random() * this.canvas.height;
-                    });
-                    this.log('侦察型无人机开始巡逻');
+                    const scoutDrones = this.drones.filter(d => d.type === 'scout');
+                    if (scoutDrones.length > 0) {
+                        scoutDrones.forEach(drone => {
+                            drone.targetX = Math.random() * (this.canvas.width - 100) + 50;
+                            drone.targetY = Math.random() * (this.canvas.height - 100) + 50;
+                        });
+                        this.log('侦察型无人机开始巡逻');
+                    } else {
+                        this.log('没有侦察型无人机');
+                    }
                     break;
                     
                 default:
@@ -1358,8 +1529,9 @@ class Game {
     
     log(message) {
         const logElement = document.getElementById('game-log');
-        logElement.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-        console.log(message);
+        const timestamp = new Date().toLocaleTimeString();
+        logElement.textContent = `[${timestamp}] ${message}`;
+        console.log(`[Game] ${message}`);
     }
     
     gameOver(victory) {
@@ -1374,7 +1546,7 @@ class Game {
             message.textContent = '你成功保护了能量晶石矿脉！';
         } else {
             title.textContent = '游戏结束';
-            message.textContent = '基地被摧毁了...';
+            message.textContent = '所有无人机被摧毁了...';
         }
         
         document.getElementById('final-wave').textContent = this.currentWave;
@@ -1391,16 +1563,19 @@ let gameSpeed = 1;
 
 function gameLoop(timestamp) {
     if (!lastTime) lastTime = timestamp;
-    const deltaTime = (timestamp - lastTime) * gameSpeed;
+    const deltaTime = timestamp - lastTime;
     lastTime = timestamp;
     
-    game.update(deltaTime);
-    game.render();
+    if (game) {
+        game.update(deltaTime);
+        game.render();
+    }
     
     requestAnimationFrame(gameLoop);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     game = new Game();
+    gameSpeed = 1;
     requestAnimationFrame(gameLoop);
 });
