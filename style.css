@@ -253,6 +253,10 @@ body {
     height: 100%;
 }
 
+#particle-canvas-container, #particle-canvas {
+    pointer-events: none;
+}
+
 #skill-panel {
     width: 250px;
     background: linear-gradient(180deg, #0d1421 0%, #1a2744 100%);
